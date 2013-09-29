@@ -89,6 +89,33 @@ func TestPatMatch(t *testing.T) {
 	assert.Equal(t, url.Values{":name": {"bar"}}, params)
 }
 
+func TestNamedRoute(t *testing.T) {
+	p := New()
+	p.Get("foo", "/foo", nil)
+	if path := p.Named("foo").Path(); path != "/foo" {
+		t.Fatalf("want: %q, got: %q", "/foo", path)
+	}
+}
+
+func TestNamedRouteWithValues(t *testing.T) {
+	p := New()
+	p.Get("foo", "/foo/:name", nil)
+	if path := p.Named("foo").Path(url.Values{"name": []string{"bar", "car"}}); path != "/foo/bar" {
+		t.Fatalf("want: %q, got: %q", "/foo/bar", path)
+	}
+	if path := p.Named("foo").Path(url.Values{"name": []string{"bike", "car"}}); path != "/foo/bike" {
+		t.Fatalf("want: %q, got: %q", "/foo/bike", path)
+	}
+}
+
+func TestNamedRouteWithValuesAndQuery(t *testing.T) {
+	p := New()
+	p.Get("foo", "/foo/:name", nil)
+	if path := p.Named("foo").Path(url.Values{"name": []string{"bar", "car"}, "bat": []string{"1"}}); path != "/foo/bar?bat=1" {
+		t.Fatalf("want: %q, got: %q", "/foo/bar?bat=1", path)
+	}
+}
+
 func TestPatRoutingHit(t *testing.T) {
 	p := New()
 

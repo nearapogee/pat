@@ -57,23 +57,23 @@ import (
 // A trivial example server is:
 //
 //	package main
-//	
+//
 //	import (
 //		"io"
 //		"net/http"
 //		"github.com/bmizerany/pat"
 //		"log"
 //	)
-//	
+//
 //	// hello world, the web server
 //	func HelloServer(w http.ResponseWriter, req *http.Request) {
 //		io.WriteString(w, "hello, "+req.URL.Query().Get(":name")+"!\n")
 //	}
-//	
+//
 //	func main() {
 //		m := pat.New()
 //		m.Get("/hello/:name", http.HandlerFunc(HelloServer))
-//	
+//
 //		// Register this pat with the default serve mux so that other packages
 //		// may also be exported. (i.e. /debug/pprof/*)
 //		http.Handle("/", m)
@@ -91,11 +91,12 @@ import (
 // Status to "405 Method Not Allowed".
 type PatternServeMux struct {
 	handlers map[string][]*patHandler
+	named    map[string]*patHandler
 }
 
 // New returns a new PatternServeMux.
 func New() *PatternServeMux {
-	return &PatternServeMux{make(map[string][]*patHandler)}
+	return &PatternServeMux{make(map[string][]*patHandler), make(map[string]*patHandler)}
 }
 
 // ServeHTTP matches r.URL.Path against its routing table using the rules
@@ -134,46 +135,65 @@ func (p *PatternServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // Head will register a pattern with a handler for HEAD requests.
-func (p *PatternServeMux) Head(pat string, h http.Handler) {
-	p.Add("HEAD", pat, h)
+func (p *PatternServeMux) Head(args ...interface{}) {
+	p.Add("HEAD", args...)
 }
 
 // Get will register a pattern with a handler for GET requests.
 // It also registers pat for HEAD requests. If this needs to be overridden, use
 // Head before Get with pat.
-func (p *PatternServeMux) Get(pat string, h http.Handler) {
-	p.Add("HEAD", pat, h)
-	p.Add("GET", pat, h)
+func (p *PatternServeMux) Get(args ...interface{}) {
+	p.Add("HEAD", args...)
+	p.Add("GET", args...)
 }
 
 // Post will register a pattern with a handler for POST requests.
-func (p *PatternServeMux) Post(pat string, h http.Handler) {
-	p.Add("POST", pat, h)
+func (p *PatternServeMux) Post(args ...interface{}) {
+	p.Add("POST", args...)
 }
 
 // Put will register a pattern with a handler for PUT requests.
-func (p *PatternServeMux) Put(pat string, h http.Handler) {
-	p.Add("PUT", pat, h)
+func (p *PatternServeMux) Put(args ...interface{}) {
+	p.Add("PUT", args...)
 }
 
 // Del will register a pattern with a handler for DELETE requests.
-func (p *PatternServeMux) Del(pat string, h http.Handler) {
-	p.Add("DELETE", pat, h)
+func (p *PatternServeMux) Del(args ...interface{}) {
+	p.Add("DELETE", args...)
 }
 
 // Options will register a pattern with a handler for OPTIONS requests.
-func (p *PatternServeMux) Options(pat string, h http.Handler) {
-	p.Add("OPTIONS", pat, h)
+func (p *PatternServeMux) Options(args ...interface{}) {
+	p.Add("OPTIONS", args...)
 }
 
 // Add will register a pattern with a handler for meth requests.
-func (p *PatternServeMux) Add(meth, pat string, h http.Handler) {
-	p.handlers[meth] = append(p.handlers[meth], &patHandler{pat, h})
+func (p *PatternServeMux) Add(meth string, args ...interface{}) {
+	n := len(args)
+	pat := args[n-2].(string)
+	h, ok := args[n-1].(http.Handler)
+	if !ok {
+		h = nil
+	}
+	ph := &patHandler{pat, h}
+	p.handlers[meth] = append(p.handlers[meth], ph)
+	if n-3 > -1 {
+		name := args[n-3].(string)
+		p.named[name] = ph
+	}
 
-	n := len(pat)
+	n = len(pat)
 	if n > 0 && pat[n-1] == '/' {
 		p.Add(meth, pat[:n-1], http.RedirectHandler(pat, http.StatusMovedPermanently))
 	}
+}
+
+func (p *PatternServeMux) Named(name string) (ph *patHandler) {
+	var ok bool
+	if ph, ok = p.named[name]; !ok {
+		panic("name does not exist")
+	}
+	return ph
 }
 
 // Tail returns the trailing string in path after the final slash for a pat ending with a slash.
@@ -209,6 +229,40 @@ func Tail(pat, path string) string {
 type patHandler struct {
 	pat string
 	http.Handler
+}
+
+func (ph *patHandler) Path(values ...url.Values) string {
+	// TODO refactor to build string in place or from preprocessed parts
+
+	// find captures
+	var i int
+	captures := make([]string, 0)
+	for i < len(ph.pat) {
+		switch {
+		default:
+			i++
+		case ph.pat[i] == ':':
+			var name string
+			name, _, i = match(ph.pat, isAlnum, i+1)
+			captures = append(captures, name)
+		}
+	}
+
+	// setup url values
+	v := url.Values{}
+	if len(values) > 0 {
+		v = values[0]
+	}
+	path := ph.pat
+	for _, capture := range captures {
+		first := v.Get(capture)
+		path = strings.Replace(path, ":"+capture, first, -1)
+		v.Del(capture)
+	}
+	if query := v.Encode(); len(query) > 0 {
+		path += strings.Join([]string{"?", query}, "")
+	}
+	return path
 }
 
 func (ph *patHandler) try(path string) (url.Values, bool) {
