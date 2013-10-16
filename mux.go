@@ -171,11 +171,21 @@ func (p *PatternServeMux) Options(args ...interface{}) {
 func (p *PatternServeMux) Add(meth string, args ...interface{}) {
 	n := len(args)
 	pat := args[n-2].(string)
-	h, ok := args[n-1].(http.Handler)
-	if !ok {
-		h = nil
+
+	h := args[n-1]
+	var ph *patHandler
+	switch h.(type) {
+	default:
+		panic("unknown handler type")
+	case nil:
+		ph = &patHandler{pat, nil}
+	case func(http.ResponseWriter, *http.Request):
+		hf := http.HandlerFunc(h.(func(http.ResponseWriter, *http.Request)))
+		ph = &patHandler{pat, hf}
+	case http.Handler:
+		ph = &patHandler{pat, h.(http.Handler)}
 	}
-	ph := &patHandler{pat, h}
+
 	p.handlers[meth] = append(p.handlers[meth], ph)
 	if n-3 > -1 {
 		name := args[n-3].(string)
